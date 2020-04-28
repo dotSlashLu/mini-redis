@@ -59,6 +59,14 @@ impl Frame {
     }
 
     /// Checks if an entire message can be decoded from `src`
+    ///
+    /// redis wire protocol:
+    /// https://redis.io/topics/protocol
+    /// - For Simple Strings the first byte of the reply is "+"
+    /// - For Errors the first byte of the reply is "-"
+    /// - For Integers the first byte of the reply is ":"
+    /// - For Bulk Strings the first byte of the reply is "$"
+    /// - For Arrays the first byte of the reply is "*"
     pub(crate) fn check(src: &mut Cursor<&[u8]>) -> Result<(), Error> {
         match get_u8(src)? {
             b'+' => {
@@ -73,7 +81,18 @@ impl Frame {
                 let _ = get_decimal(src)?;
                 Ok(())
             }
+            // Bulk Strings are encoded in the following way:
+            // - A "$" byte followed by the number of bytes composing 
+            //  the string (a prefixed length), terminated by CRLF.
+            // - The actual string data.
+            // - A final CRLF.
             b'$' => {
+                // Bulk Strings can also be used in order to signal 
+                // non-existence of a value using a special format that 
+                // is used to represent a Null value. 
+                // In this special format the length is -1, and there is 
+                // no data, so a Null is represented as:
+                // `"$-1\r\n"`
                 if b'-' == peek_u8(src)? {
                     // Skip '-1\r\n'
                     skip(src, 4)
@@ -85,6 +104,10 @@ impl Frame {
                     skip(src, len + 2)
                 }
             }
+            // RESP Arrays are sent using the following format:
+            // - A * character as the first byte, followed by the number 
+            //  of elements in the array as a decimal number, followed by CRLF.
+            // - An additional RESP type for every element of the Array.
             b'*' => {
                 let len = get_decimal(src)?;
 
